@@ -1,1 +1,162 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-title" content="Traductor">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Traductor</title>
+<style>
+:root{--bg:#f2f2f7;--card:#fff;--ink:#000;--mute:#8e8e93;--acc:#007aff;--rec:#ff3b30;--fill:#e5e5ea;--sep:#d1d1d6}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--card:#1c1c1e;--ink:#fff;--mute:#8e8e93;--acc:#0a84ff;--rec:#ff453a;--fill:#2c2c2e;--sep:#38383a}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;
+padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:520px;margin:0 auto;padding:24px 16px 40px}
+h1{font-size:34px;font-weight:700;letter-spacing:.2px;margin:0 0 16px}
+.box{background:var(--card);border-radius:14px;padding:14px 16px;margin-bottom:12px;min-height:76px}
+.lbl{font-size:13px;text-transform:uppercase;letter-spacing:.02em;color:var(--mute);margin-bottom:4px}
+#src{font-size:19px}#dst{font-size:24px;font-weight:600}
+.dim{color:var(--mute)}
+.row{display:flex;gap:10px;justify-content:center;align-items:center;margin:16px 0}
+#dir{width:100%;padding:14px;border:0;border-radius:12px;background:var(--card);color:var(--acc);font-size:17px;font-weight:500}
+#mic{width:92px;height:92px;border-radius:50%;border:0;background:var(--acc);color:#fff;font-size:38px;box-shadow:0 6px 18px rgba(0,122,255,.35);transition:transform .1s}
+#mic:active{transform:scale(.94)}
+#mic.on{background:var(--rec);box-shadow:none;animation:p 1.3s infinite}
+@keyframes p{50%{box-shadow:0 0 0 16px rgba(255,59,48,.18)}}
+button.s{border:0;background:var(--fill);color:var(--acc);border-radius:10px;padding:10px 16px;font-size:15px;font-weight:500}
+#st{text-align:center;font-size:14px;color:var(--mute);min-height:40px}
+label.t{display:flex;justify-content:space-between;align-items:center;background:var(--card);border-radius:14px;padding:11px 16px;font-size:17px;color:var(--ink)}
+label.t input{-webkit-appearance:none;appearance:none;flex:none;width:51px;height:31px;border-radius:16px;background:var(--fill);position:relative;margin:0;transition:background .2s}
+label.t input::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.25);transition:transform .2s}
+label.t input:checked{background:#34c759}
+label.t input:checked::after{transform:translateX(20px)}
+form{display:flex;gap:8px;margin:14px 0}
+input[type=text]{flex:1;min-width:0;padding:12px 14px;border:0;border-radius:10px;background:var(--card);color:var(--ink);font-size:17px;outline:none}
+#hist{background:var(--card);border-radius:14px;padding:0 16px}
+#hist:empty{display:none}
+.h{border-top:.5px solid var(--sep);padding:12px 0}.h:first-child{border-top:0}.h b{display:block;font-weight:600}
+</style>
+</head>
+<body>
+<main>
+<h1>Traductor</h1>
+<button id="dir"></button>
 
+<div class="box" style="margin-top:12px"><div class="lbl">Dijiste</div><div id="src" class="dim">Toca el micrófono y habla…</div></div>
+<div class="box"><div class="lbl">Traducción</div><div id="dst" class="dim">…</div></div>
+
+<div class="row"><button id="mic" aria-label="Hablar">🎤</button></div>
+<div id="st"></div>
+<label class="t"><span>Modo continuo</span><input type="checkbox" id="cont" checked></label>
+<div class="row"><button class="s" id="rep">🔊 Repetir</button><button class="s" id="clr">Borrar historial</button></div>
+
+<form id="f"><input type="text" id="txt" placeholder="O escribe aquí…" autocomplete="off"><button class="s" type="submit">Traducir</button></form>
+<div id="hist"></div>
+</main>
+
+<script>
+(function(){
+var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+var $=function(i){return document.getElementById(i)};
+var mic=$("mic"),srcEl=$("src"),dstEl=$("dst"),stEl=$("st"),cont=$("cont"),dirBtn=$("dir");
+var esToEn=true,listening=false,busy=false,rec=null,last="",finalText="";
+
+function status(t){stEl.textContent=t||""}
+function labels(){
+  dirBtn.textContent=esToEn?"Español → Inglés  (toca para cambiar)":"Inglés → Español  (toca para cambiar)";
+  mic.classList.toggle("on",listening);mic.textContent=listening?"⏹":"🎤";
+}
+function unescapeHtml(s){var t=document.createElement("textarea");t.innerHTML=s;return t.value}
+
+function prime(){try{var u=new SpeechSynthesisUtterance(" ");u.volume=0;speechSynthesis.speak(u)}catch(e){}}
+function speak(text,done){
+  if(!("speechSynthesis" in window)){done&&done();return}
+  speechSynthesis.cancel();
+  var lang=esToEn?"en-US":"es-ES";
+  var u=new SpeechSynthesisUtterance(text);u.lang=lang;
+  var v=speechSynthesis.getVoices().filter(function(x){return x.lang.replace("_","-")===lang})[0];
+  if(v)u.voice=v;
+  u.onend=u.onerror=function(){done&&done()};
+  speechSynthesis.speak(u);
+}
+
+async function translate(text){
+  text=(text||"").trim();if(!text)return;
+  busy=true;srcEl.textContent=text;srcEl.classList.remove("dim");
+  dstEl.textContent="Traduciendo…";dstEl.classList.add("dim");status("Traduciendo…");
+  try{
+    var url="https://api.mymemory.translated.net/get?q="+encodeURIComponent(text)+"&langpair="+(esToEn?"es|en":"en|es");
+    var r=await fetch(url);var j=await r.json();
+    if(String(j.responseStatus)!=="200")throw new Error("quota");
+    var out=unescapeHtml(j.responseData.translatedText||"").trim();
+    if(!out)throw new Error("empty");
+    dstEl.textContent=out;dstEl.classList.remove("dim");last=out;
+    addHist(text,out);status("Hablando…");
+    speak(out,function(){busy=false;status("");resume()});
+  }catch(e){
+    busy=false;dstEl.textContent="No se pudo traducir. Revisa tu internet o intenta más tarde.";status("");
+  }
+}
+
+function addHist(a,b){
+  var d=document.createElement("div");d.className="h";
+  var x=document.createElement("span");x.className="dim";x.textContent=a;
+  var y=document.createElement("b");y.textContent=b;
+  d.appendChild(x);d.appendChild(y);$("hist").insertBefore(d,$("hist").firstChild);
+}
+
+function start(){
+  if(!SR){listening=false;labels();status("Este navegador no tiene dictado. Abre la página en Safari o escribe abajo.");return}
+  rec=new SR();rec.lang=esToEn?"es-ES":"en-US";rec.interimResults=true;rec.continuous=false;
+  finalText="";
+  rec.onresult=function(e){
+    var interim="";
+    for(var i=e.resultIndex;i<e.results.length;i++){
+      var t=e.results[i][0].transcript;
+      if(e.results[i].isFinal)finalText+=t;else interim+=t;
+    }
+    srcEl.textContent=(finalText+interim)||"…";srcEl.classList.remove("dim");
+  };
+  rec.onerror=function(e){
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+      listening=false;labels();
+      status("Micrófono bloqueado. Permítelo en Safari y activa Dictado en Ajustes → General → Teclado. Si abriste desde el ícono, prueba desde Safari.");
+    }else if(e.error!=="no-speech"&&e.error!=="aborted"){status("Error de micrófono: "+e.error)}
+  };
+  rec.onend=function(){
+    if(finalText.trim()){translate(finalText)}
+    else if(listening&&!busy){setTimeout(function(){if(listening&&!busy)start()},300)}
+    else if(!busy){listening=false;labels();status("")}
+  };
+  try{rec.start();status("Escuchando…")}catch(e){}
+}
+function resume(){
+  if(listening&&cont.checked&&!busy){start()}
+  else{listening=false;labels()}
+}
+
+mic.addEventListener("click",function(){
+  prime();
+  if(listening){listening=false;labels();try{rec&&rec.stop()}catch(e){}speechSynthesis.cancel();busy=false;status("");return}
+  if(busy)return;
+  listening=true;labels();start();
+});
+dirBtn.addEventListener("click",function(){
+  listening=false;busy=false;try{rec&&rec.abort()}catch(e){}speechSynthesis.cancel();
+  esToEn=!esToEn;srcEl.textContent="…";dstEl.textContent="…";status("");labels();
+});
+$("rep").addEventListener("click",function(){if(last){prime();speak(last)}});
+$("clr").addEventListener("click",function(){$("hist").innerHTML=""});
+$("f").addEventListener("submit",function(ev){
+  ev.preventDefault();prime();var v=$("txt").value;$("txt").value="";translate(v);
+});
+labels();
+})();
+</script>
+</body>
+</html>
